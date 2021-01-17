@@ -1,0 +1,81 @@
+---
+title: "Analysis of Energy Consumption"
+author: "Elena Bonan"
+output: html_notebook
+---
+
+The following code was used to both descriptive analysis and forcasting of the consumption of energy. 
+
+```{r setup }
+# We set the options for the Rmarkdown
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+
+# We load the libraries and set the working directory
+if(require("pacman")=="FALSE"){
+  install.packages("pacman")
+}
+pacman::p_load(plotly, corrplot, lubridate, hms, Hmisc, imputeTS,rstudioapi,kknn,ggplot2, randomForest, dplyr, shiny, tidyr, ggplot2, caret, forecast)
+
+```
+
+# Dataset structure
+We look at the dataset structure. 
+
+```{r}
+data <- read.delim("household_power_consumption.txt",header = TRUE, sep=";")
+head(data)
+```
+
+
+```{r}
+summary(data)
+
+```
+
+# Data Cleanining
+
+First we put the variables in the right type. 
+
+```{r }
+data$Global_reactive_power = as.numeric(as.character(data$Global_reactive_power))
+data$Global_active_power = as.numeric(as.character(data$Global_active_power))
+data$Sub_metering_1 = as.numeric(as.character(data$Sub_metering_1))
+data$Sub_metering_2= as.numeric(as.character(data$Sub_metering_2))
+data$Global_intensity = as.numeric(as.character(data$Global_intensity))
+data$Voltage = as.numeric(as.character(data$Voltage))
+``` 
+
+We First we change the unit of measure of the power and we create a column with the date and the time. Then we change the time in order to take in consideration the solar an legal hour. 
+
+```{r}
+#Change the unite measure
+data$Global_active_power = data$Global_active_power * 1000 / 60
+data$Global_reactive_power = data$Global_reactive_power * 1000 / 60
+
+#create a column in the format strptime
+
+data<-cbind(data,paste(data$Date,data$Time), stringsAsFactors=FALSE)
+colnames(data)[10] <-"DateTime"
+data<- data[,c(ncol(data), 1:(ncol(data)-1))]
+data$DateTime <- strptime(data$DateTime, "%d/%m/%Y %H:%M:%S", tz="GMT")
+data$Date <- NULL
+data$Time <-NULL
+#solar and legal hour
+
+a = which(data$DateTime == as.POSIXct("2007-03-25 02:00:00", tz = "GMT") | data$DateTime ==as.POSIXct( "2007-10-28 01:59:00", tz = "GMT")) 
+data[a[1]:a[2],1] = data[a[1]:a[2],1]+3600
+
+a = which(data$DateTime == as.POSIXct("2008-03-30 02:00:00", tz = "GMT") | data$DateTime ==as.POSIXct( "2008-10-26 01:59:00", tz = "GMT")) 
+data[a[1]:a[2],1] = data[a[1]:a[2],1]+3600
+
+a = which(data$DateTime == as.POSIXct("2009-03-29 02:00:00", tz = "GMT") | data$DateTime ==as.POSIXct( "2009-10-25 01:59:00", tz = "GMT")) 
+data[a[1]:a[2],1] = data[a[1]:a[2],1]+3600
+
+a = which(data$DateTime == as.POSIXct("2010-03-28 02:00:00", tz = "GMT") | data$DateTime ==as.POSIXct( "2010-10-31 01:59:00", tz = "GMT")) 
+data[a[1]:a[2],1] = data[a[1]:a[2],1]+3600
+
+# Recreate the date column and reorder the order of the columns. 
+data$Date <- as.Date(data$DateTime)
+data=data[,c(1,9,2:8)]
+
+```
