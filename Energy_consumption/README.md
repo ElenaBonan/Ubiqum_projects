@@ -1,14 +1,14 @@
 # Energy Consumption
-
-I studied the data about the energy consumption of a family for four years. More precisely, for every minute I  knew the total energy consumption and the electricity used in the three submetering devices of the house. After having cleaned the data and taking care of the missing values, I did some descriptive statistics regarding the habits of the family and the behaviour of the electrical devices. Finally, I forecasted the monthly energy consumption for the following year. I applied different models on time series, like ARIMA and Holt-Winter. 
+The goal of the project was to show which useful information a family can get if they use submetering devices for monitoring the consumption of energy. We studied the data about the energy consumption of a family during four years. In particular, for every minute we knew the total energy consumption and the consumption in the three submetering devices of the house. After we had cleaned the data and we had taken care of the missing values, we did some intresting graphics about the consumption of energy using different time aggregation. Finally, we forecasted the monthly energy consumption applying different models on time series, like ARIMA and Holt-Winter. 
 
 <b> Problem:</b> Descriptive analysis and time series forcasting. <br>
-<b> Data set size:</b> <br>
 <b> Data source:</b> https://archive.ics.uci.edu/ml/datasets/individual+household+electric+power+consumption <br>
+<b> Link to visualize the notebook: </b> https://elenabonan.github.io/Ubiqum_projects/
 
 ## Content of the Repository
-- The Dataset 
-- The R script used to do descriptive analysis and forecasting.
-- A PowerPoint presentation of the findings.
+- <br> Analysis.Rmd </b> This is the code of the R notebook where you can fing both the descriptive Analysis and the Forecast of the Energy consumption. For visualize the html, look at the following link https://elenabonan.github.io/Ubiqum_projects/
+- <br> Analysis.nb.html </b> This is the html code given by the Rmarkdown, using as output html_notebook
+- <br> Presentation.pptx </b> This is a presentation I gave during the course showing the most important findings. 
 
 ## Structure of the Code 
+- 
