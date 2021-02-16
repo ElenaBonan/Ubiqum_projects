@@ -6,9 +6,9 @@ The goal of the project was to show which useful information a family can get if
 <b> Link to visualize the notebook: </b> https://elenabonan.github.io/Ubiqum_projects/
 
 ## Content of the Repository
-- <br> Analysis.Rmd </b> This is the code of the R notebook where you can fing both the descriptive Analysis and the Forecast of the Energy consumption. For visualize the html, look at the following link https://elenabonan.github.io/Ubiqum_projects/
-- <br> Analysis.nb.html </b> This is the html code given by the Rmarkdown, using as output html_notebook
-- <br> Presentation.pptx </b> This is a presentation I gave during the course showing the most important findings. 
+- <b> Analysis.Rmd </b> This is the code of the R notebook where you can fing both the descriptive Analysis and the Forecast of the Energy consumption. For visualize the html, look at the following link https://elenabonan.github.io/Ubiqum_projects/
+- <b> Analysis.nb.html </b> This is the html code given by the Rmarkdown, using as output html_notebook
+- <b> Presentation.pptx </b> This is a presentation I gave during the course showing the most important findings. 
 
 ## Structure of the Code 
 - 
