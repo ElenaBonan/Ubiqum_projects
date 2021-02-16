@@ -4,13 +4,17 @@ author: "Elena Bonan"
 output: html_notebook
 ---
 
-The following code was used to both descriptive analysis and forcasting of the consumption of energy. 
+In this notebook you can find some descriptive analysis of the energy consumption of the family and the forecasting of consumption for the future months. Indeed, the goal of the project is to "sell" the submetering devices showing to the customers how they can benefit from the data collected by the devices. So, on the one hand, we show which useful information they can obtain considering "real time data" and agregated data coming from the devices, on the other hand how we can forecast the energy consumption using past data.
 
-```{r setup }
+# Exploration of the Dataset
+## R Markdown settings and R packages
+
+
+```{r }
 # We set the options for the Rmarkdown
-knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+knitr::opts_chunk$set( warning = FALSE)
 
-# We load the libraries and set the working directory
+# We load the libraries 
 if(require("pacman")=="FALSE"){
   install.packages("pacman")
 }
@@ -18,7 +22,7 @@ pacman::p_load(plotly, corrplot, lubridate, hms, Hmisc, imputeTS,rstudioapi,kknn
 
 ```
 
-# Dataset structure
+## Dataset structure
 We look at the dataset structure. 
 
 ```{r}
@@ -26,26 +30,21 @@ data <- read.delim("household_power_consumption.txt",header = TRUE, sep=";")
 head(data)
 ```
 
+## Data Cleanining
 
-```{r}
-summary(data)
-
-```
-
-# Data Cleanining
-
-First we put the variables in the right type. 
+We put the variables in the right type. 
 
 ```{r }
-data$Global_reactive_power = as.numeric(as.character(data$Global_reactive_power))
-data$Global_active_power = as.numeric(as.character(data$Global_active_power))
-data$Sub_metering_1 = as.numeric(as.character(data$Sub_metering_1))
-data$Sub_metering_2= as.numeric(as.character(data$Sub_metering_2))
-data$Global_intensity = as.numeric(as.character(data$Global_intensity))
-data$Voltage = as.numeric(as.character(data$Voltage))
+data$Global_reactive_power = suppressWarnings(as.numeric(as.character(data$Global_reactive_power)))
+data$Global_active_power = suppressWarnings(as.numeric(as.character(data$Global_active_power)))
+data$Sub_metering_1 = suppressWarnings(as.numeric(as.character(data$Sub_metering_1)))
+data$Sub_metering_2= suppressWarnings(as.numeric(as.character(data$Sub_metering_2)))
+data$Global_intensity = suppressWarnings(as.numeric(as.character(data$Global_intensity)))
+data$Voltage = suppressWarnings(as.numeric(as.character(data$Voltage)))
 ``` 
 
-We First we change the unit of measure of the power and we create a column with the date and the time. Then we change the time in order to take in consideration the solar an legal hour. 
+We change the unit of measure of the active power and reactive power in order to be the same of the submetering (watt-hour).
+We create a column with the date and the time joined. Finally we change the time in order to take in consideration the solar and legal hour. 
 
 ```{r}
 #Change the unite measure
@@ -77,5 +76,294 @@ data[a[1]:a[2],1] = data[a[1]:a[2],1]+3600
 # Recreate the date column and reorder the order of the columns. 
 data$Date <- as.Date(data$DateTime)
 data=data[,c(1,9,2:8)]
+```
+
+We look at some summary measures of the variables.
+```{r results = 'hold'}
+summary(data)
+```
+The missing values are the same quantity for all the numerical variables. Morevore we hace checked they are missing in the same rows. 
+We take a look at how they are distributed. In particuar at their daily quantity. 
+ 
+```{r results = 'hold'}
+#create a table with the missing values 
+DATA=data[which(is.na(data$Global_reactive_power) == TRUE),]
+t = table(DATA$Date)
+print(t)
+```
+
+We see that there are consecutive days where we have null values for all the minutes in that days. We can then suppose that during that time the family was away and turned off the electricity. We can then substitute these NA with 0, cause it represent the real "consumption of energy" during that days. There are then days where there are very few null values, we can suppose that this is due to temporary malfunction of the machine. We can then substitute these NA with the previous non-null value. 
+
+
+```{r}
+# I create a new dataset where I am going to apply the substitution. 
+mydata = data
+
+#create a list with the dates where I want to substitute the null values with 0. 
+l = c()
+for (i in 1:length(row.names(t)))
+     {
+       if (t[i]>=178)
+       {l = c(l, row.names(t)[i])}
+}
+
+a = which( (as.character(mydata$Date) %in% l) & is.na(mydata$Global_active_power) )
+mydata[a,3:9] = c(0,0,0,0,0,0,0)
+
+# For the remaining days we substitute the null values with the previous no-null value
+
+for (i in 3:9)
+{
+mydata[,i] = na_locf(mydata[,i], option='locf')
+}
 
 ```
+
+
+
+## Feature engineering 
+
+We create a new column with the energy that is used in the house but not in the devices connected to the submetering 1,2 and 3. In this way we have divided the total electricity used by the familiy in four different sources.
+
+```{r}
+ #create a column with energy not used in submetering 1,2,3
+mydata$other = as.numeric(mydata$Global_active_power-mydata$Sub_metering_1-mydata$Sub_metering_2-mydata$Sub_metering_3)
+
+```
+
+# Descriptive Analysis 
+We made different plots to understand which useful information can be extracted from the device using different aggregation of time. Here in the notebook you can see some examples.
+
+## Consumption per minute
+
+We look at the energy consuption per minute in the different submetering. we would like to show how it is possible to identify some electrical appliances. Indeed, every appliance has a specific pattern in the consumption of energy. This information can be used to check if there are malfunctions or if the device is "too old" and it consuming more energy then expected. For example, in the following graph you can see the consumption of energy of the dishwasher. Thanks to this level of details we have in the data, we are able to calculate the energy used for washing the dishes.
+
+```{r}
+dayconsidered = subset( mydata, day(Date)==8 & month(Date)==10 & year(Date) == 2010)
+g =ggplot(dayconsidered[c(1200:1440),],aes(x = c(1200:1440), y = Sub_metering_1))+ geom_point()+geom_line()+
+  ggtitle(paste('Date:', weekdays(dayconsidered$Date[1]), dayconsidered$Date[1]), "dishwasher")+xlab('minutes')+
+  ylab('Sub metering 1')+theme_minimal()
+print(g)
+```
+
+If we look at the submetering two, we can see a pattern that keeps repearing in the consumption of energy. This is related with the fridge. Indeed, this appliance needs always energy at regular intervals. It is interesting that if a family monitor the energy real time, it could be possible to know immediately if the fridge remains open for too long. This can represent a useful application of the submetering devices.
+
+```{r}
+dayconsidered = subset( mydata, day(Date)==8 & month(Date)==10 & year(Date) == 2010)
+g =ggplot(dayconsidered,aes(x = c(1:1440), y = Sub_metering_2))+ geom_point()+geom_line()+
+  ggtitle(paste('Date:', weekdays(dayconsidered$Date[1]), dayconsidered$Date[1]), "fridge")+xlab('minutes')+
+  ylab('Sub metering 2')+theme_minimal()
+print(g)
+```
+
+If we look at the energy used that it is not tracked by the submetering devices, we can see that it more difficult to capture the behaviour of the single appliances. Nevertheless, it is possible to check when the peaks of energy occur during the days and this can be a useful information to monitor that noting unexpected has happened.
+
+
+```{r}
+dayconsidered = subset( mydata, day(Date)==8 & month(Date)==10 & year(Date) == 2010)
+g =ggplot(dayconsidered,aes(x = c(1:1440), y = other))+ geom_point()+geom_line()+
+  ggtitle(paste('Date:', weekdays(dayconsidered$Date[1]), dayconsidered$Date[1]))+xlab('minutes')+
+  ylab('Other consumption')+theme_minimal()
+print(g)
+```
+
+### Consumption per hour
+The consumption of energy aggregated by hour it is an indication of when the family is more "active" at home. This information can be used by the family to distribute better the consumption of energy in order to save money. Indeed, the electricity can have a different price depending on which hour is used.
+
+```{r}
+# First we aggregate the energy by hour.
+mydatah= mydata[,2:ncol(mydata)]
+mydatah$hour = format( mydata$DateTime, format="%H") 
+mydatahours = data.frame(mydatah %>% group_by(Date, hour ) %>% summarise_all(sum))
+
+# We plot the energy consumption in one specific day
+dayconsidered = subset(mydatahours, day(Date)== 5& month(Date)==3 & year(Date) == 2010)
+  g =ggplot(dayconsidered,aes(x = c(1:24), y = Global_active_power))+ geom_point()+geom_line()+
+    ggtitle(paste('Date:', weekdays(dayconsidered$Date[1]), dayconsidered$Date[1]))+xlab("hour")+theme_minimal()
+  print(g)
+```
+
+## Consumption per month
+
+We aggregate the energy used in a mounth and we look at how the energy consumption change during the months. 
+```{r}
+# We aggregate the data 
+mydatamonth = mydata
+mydatamonth$monthyear = format(mydata$Date, "%Y-%m")
+mydatamonth$DateTime = NULL
+mydatamonth$Date = NULL
+mydatamonths = mydatamonth %>%  group_by(monthyear) %>%  summarize_all(sum)
+mydatamonths$year = as.factor(substring(mydatamonths$monthyear,1,4))
+mydatamonths$month = as.factor(substring(mydatamonths$monthyear,6,8))
+
+```
+
+First we look at the global energy used in the different months. It is immediately clear that the energy consumption change with the seasons. Indeed we reach the peak during the winter and the trough during summer. 
+
+```{r}
+ggplot(data=mydatamonths[c(2:48),], aes(x=month, y= Global_active_power, group= year)) +
+  geom_line(aes(color= year))+
+  geom_point()+
+  theme(legend.position="top")+labs(y= "Global active energy", x = "Month", color=' Years')+theme_minimal()
+
+```
+
+We can then look how much of the energy is used during the year for the different group of appliance that are connected to the different submetering devices.
+
+```{r}
+# First we group the enrgy by year
+mydatayears = data.frame(mydatamonths[,2: (ncol(mydatamonths)-1)] %>% group_by(year) %>% summarize_all(sum))
+
+# Then we can plot the pie chart for one year.
+ds <- data.frame(labels = c("Sub-metering 1", "Sub-metering 2", "Submetering 3", 'Other energy used'), values = unlist(mydatayears[4,c(6,7,8,9)]))
+plot_ly(ds, labels = ~labels, values = ~values) %>%add_pie() %>% layout(title = "2009")
+```
+
+Finally, we can see how during the year the consummption of electricity changes in the different submetering. 
+
+```{r}
+plot_ly(mydatamonths %>% filter(year==2009), x = ~month, y = ~Sub_metering_1, type = 'bar', name = 'Sub metering 1') %>%
+  add_trace(y = ~Sub_metering_2, name = 'Sub metering 2') %>%
+  add_trace(y = ~Sub_metering_3, name = 'Sub metering 3') %>%
+  add_trace(y =~other, name = 'Other energy used') %>%
+  layout(yaxis = list(title = 'Energy'),xaxis = list(title = 'Month'), title = "2009" , barmode = 'stack')
+```
+
+# Forecasting
+
+## Null values
+
+When we have to forecast, we use a different approach with the null values. Indeed, since the holidays of the family were not always in the same period, we decide to fill that missing values using the usual consumption of energy in a similar period (instead of substituting them with 0). For shorter period of missing values, we consider the previous non null value.
+
+```{r}
+energy = data
+energy$Voltage <-NULL
+energy$Global_intensity <-NULL
+
+# As before we look at number of null values per day
+DATA=data[which(is.na(data$Global_reactive_power) == TRUE),]
+t = table(DATA$Date)
+
+# In the day where we have few missing values we use the previous non null value
+mv= c()
+for (i in 1:length(t))
+{
+  if (t[i] < 178 )
+  {mv = c(mv, row.names(t)[i])}
+}
+b = which( (as.character(energy$Date) %in% mv) )
+
+for(i in 3:7)
+{
+  energy[b,i] = na_locf(energy[b,i], option='locf')
+}
+
+# For the rest of the missing values, we consider all the values of energy, that were registered in the different years in the same season, weekday and minute, and we subtitute a random value from them. 
+
+energy$season = 'winter'
+energy$season[month(energy$DateTime)>2 & month(energy$DateTime) <6 ]='spring'
+energy$season[month(energy$DateTime)>5 & month(energy$DateTime) <9 ]='summer'
+energy$season[month(energy$DateTime)>8 & month(energy$DateTime) <12 ]='autumn'
+energy$season = as.character(energy$season)
+energy$weekdays = weekdays(energy$DateTime)
+ll= unique(energy$season)
+l = unique(energy$weekdays)
+
+for (i in ll){
+  for (j in 0:23){
+    for (k in 1:length(l))
+    {
+      index = which( hour(energy$DateTime) == j & as.character(energy$weekdays)== l[k] & as.character(energy$season)==i  )
+      for (m in 3:7)
+      {energy[index,m] = as.numeric(impute(energy[index,m],'random'))}
+}}}
+
+```
+
+## Forcast by month
+
+After have examinated the data with different granularities (days, weekdays,etc.), we have decided to concentrate in predicting the energy by months. Indeed there is clearly a seasonality in this case. In the following code, we show the forecast we have obtained for the global energy using three well known methods for time series forecasting. 
+
+## Preparing the timeserie
+
+We create a time serie object and we create the training and test set. As training we will consider the first three years of data and as test the last eleven months of the last year.
+
+```{r}
+# Create a time serie object
+energymonths = data.frame(energy %>% mutate(monthyear = format(mydata$Date, "%Y-%m")) %>% select(monthyear, Global_active_power) %>% group_by(monthyear) %>% summarize_all(sum))
+energymonths = ts(energymonths[c(2:47),2], start=2007, frequency = 12)
+
+# Create the training and the test
+training = subset(energymonths, start = 1 ,end = 36)
+testing= subset(energymonths, start= 37, end= 47)
+```
+
+In the following graph, you can see the time serie we are analysing. 
+
+```{r}
+autoplot(energymonths)+theme_minimal()
+```
+
+## Linear model
+
+```{r}
+fit.lm = tslm( training ~ trend + season  )
+summary(fit.lm)
+```
+
+```{r}
+checkresiduals(fit.lm)
+```
+
+```{r}
+a1 = accuracy(as.numeric(testing), forecast( fit.lm, h = 11)$mean)
+print(a1)
+```
+
+
+## Holt-Winter
+First we look at the method (Holt winter). In the following image we can see the results we obtain in the training. In particular the values for the parameters alpha and gamma, and the results we obtain in the training. 
+
+```{r}
+fit.ets= ets(training)
+summary(fit.ets)
+```
+We do the following test to look at the residuals.
+
+```{r}
+checkresiduals(fit.ets)
+#Box.test(fit.ets$residuals, lag=20, type="Ljung-Box")
+```
+
+We look at the error on the test.
+
+```{r}
+a2= accuracy(as.numeric(testing), forecast(fit.ets,h = 11)$mean)
+print(a2)
+```
+
+
+## ARIMA
+
+We do a similar study with the model ARIMA. We look at the parameters.
+
+```{r}
+fit.arima = auto.arima(training)
+summary(fit.arima)
+```
+
+We study the residuals.
+```{r}
+checkresiduals(fit.arima)
+```
+We look at the error on the test.
+
+```{r}
+a3= accuracy(as.numeric(testing), forecast(fit.arima,h = 11)$mean)
+print(a2)
+```
+
+## Conclusion
+
+Comparing the three models we can see that ...
+
