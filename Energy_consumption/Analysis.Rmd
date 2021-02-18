@@ -61,7 +61,7 @@ data$Date <- NULL
 data$Time <-NULL
 #solar and legal hour
 
-a = which(data$DateTime == as.POSIXct("2007-03-25 02:00:00", tz = "GMT") | data$DateTime ==as.POSIXct( "2007-10-28 01:59:00", tz = "GMT")) 
+a = which(data$DateTime == as.POSIXct("2007-03-25 02:00:00", tz = "GMT") | data$DateTime == as.POSIXct( "2007-10-28 01:59:00", tz = "GMT")) 
 data[a[1]:a[2],1] = data[a[1]:a[2],1]+3600
 
 a = which(data$DateTime == as.POSIXct("2008-03-30 02:00:00", tz = "GMT") | data$DateTime ==as.POSIXct( "2008-10-26 01:59:00", tz = "GMT")) 
@@ -282,20 +282,23 @@ for (i in ll){
 
 ## Forcast by month
 
-After have examinated the data with different granularities (days, weekdays,etc.), we have decided to concentrate in predicting the energy by months. Indeed there is clearly a seasonality in this case. In the following code, we show the forecast we have obtained for the global energy using three well known methods for time series forecasting. 
+After have examinated the data with different granularities (days, weekdays,etc.), we have decided to concentrate in predicting the energy by month. Indeed there is clearly a seasonality in this case. In the following code we show the forecast we have obtained for the global energy using two well known methods for time series forecasting. 
 
 ## Preparing the timeserie
 
-We create a time serie object and we create the training and test set. As training we will consider the first three years of data and as test the last eleven months of the last year.
+To work with time series forecasting, first we have to create a timeseries object with the right frequency. Then we need to take care of the last observation (November 2010) since we are missing 4 days of that month in the data. We consider then the average daily consumption during that month and we add the "missing energy" to the last value of the time serie. 
 
 ```{r}
 # Create a time serie object
-energymonths = data.frame(energy %>% mutate(monthyear = format(mydata$Date, "%Y-%m")) %>% select(monthyear, Global_active_power) %>% group_by(monthyear) %>% summarize_all(sum))
-energymonths = ts(energymonths[c(2:47),2], start=2007, frequency = 12)
 
-# Create the training and the test
-training = subset(energymonths, start = 1 ,end = 36)
-testing= subset(energymonths, start= 37, end= 47)
+energymonths = data.frame(energy %>% mutate(monthyear = format(mydata$Date, "%Y-%m")) %>% select(monthyear, Global_active_power) %>% group_by(monthyear) %>% summarize_all(sum))
+energymonths = ts(energymonths[c(2:48),2], start=2007, frequency = 12)
+
+# Adding the energy of 4 missing days of November 2010
+
+December2010 = energy %>% filter(year(Date)== 2010, month(Date) == 11) %>% select(Date, Global_active_power) %>% group_by(Date) %>%  summarize_all(sum)
+meanconsumption = mean(December2010$Global_active_power)
+energymonths[47] = energymonths[47] + 4*meanconsumption
 ```
 
 In the following graph, you can see the time serie we are analysing. 
@@ -304,66 +307,118 @@ In the following graph, you can see the time serie we are analysing.
 autoplot(energymonths)+theme_minimal()
 ```
 
-## Linear model
+We can see that we have two outliers in the time series, respectively December 2007 and August 2008. We decide to substitute the value of August with the mean between the previous and following August. We will leave December 2007 as it is, since we have just three observations in the same month (for August 2008 we have four).
 
 ```{r}
-fit.lm = tslm( training ~ trend + season  )
-summary(fit.lm)
+# We check the outliers also with an automatic function
+ouliers<- tsoutliers(energymonths) 
+
+# We substitute the August 2008
+energymonths[20] = 0.5*(energymonths[8]+energymonths[32])
 ```
 
+We recheck the time series obtained.
+
 ```{r}
-checkresiduals(fit.lm)
+autoplot(energymonths)+theme_minimal()
 ```
 
+We create the traning and the test. For the training we will consider the first three years of data, for the test the last eleven months of the last year.
+
 ```{r}
-a1 = accuracy(as.numeric(testing), forecast( fit.lm, h = 11)$mean)
-print(a1)
+# Create the training and the test
+training = subset(energymonths, start = 1 ,end = 36)
+testing= subset(energymonths, start= 37, end= 47)
 ```
 
+Looking at the time serie, we know that the prediction will be based on the seasonal component.
 
-## Holt-Winter
-First we look at the method (Holt winter). In the following image we can see the results we obtain in the training. In particular the values for the parameters alpha and gamma, and the results we obtain in the training. 
+
+## Exponential Smoothing models
+
+First we look at an exponential smoothing models (Holt-Winters models). In the following image we can see the results we obtain in the training using the automatic search. In particular the values for the parameters alpha and gamma, and the distribution of the residuals. 
 
 ```{r}
-fit.ets= ets(training)
-summary(fit.ets)
+# We look at the results obtained by the default method
+fit_ets= ets(training)
+summary(fit_ets)
 ```
-We do the following test to look at the residuals.
+As expected, the model suggested doesn't have a trend component but just a seasonal one which is multiplicative.
+The small value we obtain for the seasonality means that we give importance to all the previous observation during the same month. We do the following test to look at the residuals.
 
 ```{r}
-checkresiduals(fit.ets)
-#Box.test(fit.ets$residuals, lag=20, type="Ljung-Box")
+checkresiduals(fit_ets)
 ```
 
-We look at the error on the test.
+The p-value in the Ljung-Box test suggest that the residuals are not uncorrelate. This means that there could be some information in the time series that we are not capturing.
+Finally, We look at the error on the test.
 
 ```{r}
-a2= accuracy(as.numeric(testing), forecast(fit.ets,h = 11)$mean)
+forecast1 = forecast(fit_ets,h = 11)
+a1= accuracy(as.numeric(testing), forecast1$mean)
 print(a2)
 ```
 
+We plot the forecasting in the test versus the actual values. 
+```{r}
+autoplot( energymonths)+autolayer(forecast1, PI = F)+theme_minimal()
+```
+We try to use also the additive method for the seasonality, so the model (M,N,A).
+```{r}
+fit_ets_additive = ets(training, model = "MNA")
+summary(fit_ets_additive)
+```
+
+```{r}
+checkresiduals(fit_ets_additive)
+```
+
+```{r}
+forecast2 = forecast(fit_ets_additive,h = 11)
+a2= accuracy(as.numeric(testing), forecast2$mean)
+print(a2)
+```
+
+We obtain worst results in the test respect to the previous model, as one can see looking at the RMSE, MAE and MAPE.
 
 ## ARIMA
 
-We do a similar study with the model ARIMA. We look at the parameters.
+We do a similar study with the ARIMA model. We first look at the parameters given by the automatic function.
 
 ```{r}
 fit.arima = auto.arima(training)
 summary(fit.arima)
 ```
 
+The arima model found is the one that consider just to differenciate by year (lag 12). It means that the forecast will be the naive one, considering the observation of the same month in the previous year.
+
 We study the residuals.
 ```{r}
 checkresiduals(fit.arima)
 ```
+This time the test suggests that the residuals are not correlated.
 We look at the error on the test.
 
 ```{r}
-a3= accuracy(as.numeric(testing), forecast(fit.arima,h = 11)$mean)
-print(a2)
+forecast3 = forecast(fit.arima,h = 11)
+a3= accuracy(as.numeric(testing), forecast2$mean)
+print(a3)
 ```
+
+We plot the forecast in the testing, that it is simply the previous observation taken during the same month. 
+
+```{r}
+autoplot( energymonths)+autolayer(forecast2, PI = F)+theme_minimal()
+```
+
 
 ## Conclusion
 
-Comparing the three models we can see that ...
+Comparing the results we have obtained on the test, we have seen that the best model is ETS(M,N,M). We can then forecast using this model the energy consumption of the family for 2011.
+```{r}
+model = ets(energymonths, model = "MNM")
+forecast4 = forecast(model, h = 12)
+autoplot( energymonths)+autolayer(forecast4, PI = T)+theme_minimal()
+
+```
 
