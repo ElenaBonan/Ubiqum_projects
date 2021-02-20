@@ -1,0 +1,933 @@
+---
+title: "Localisation using Wifi fingerprints"
+author: "Elena Bonan"
+output: html_notebook
+---
+
+In this script you can find the code we used to create the models after we have studied in details the dataset.
+
+## R Markdown setting and R packages
+
+```{r setup}
+knitr::opts_chunk$set(warnings = FALSE)
+
+if(require("pacman")=="FALSE"){
+  install.packages("pacman")
+}
+pacman::p_load(rstudioapi,kknn,ggplot2, randomForest, dplyr, shiny, tidyr, ggplot2, caret, gridExtra)
+```
+
+# Preprocessing
+In this first part of the code we clean the data in order to fit the model just with right and useful information.
+
+## Dataset
+We load the data and save the path to the folder where we are going to save the models. 
+
+```{r}
+df = read.csv(file = 'trainingData.csv', header = TRUE, sep = ',')
+validation = read.csv(file = 'validationData.csv', header = TRUE)
+model_paths = './Models'
+head(df)
+```
+
+## Data Cleaning
+
+We put the variable in the right type.
+
+```{r}
+df$PHONEID = as.factor(df$PHONEID)# we have 16: 1 10 11 13 14 16 17 18 19 22 23 24 3 6 7 8 
+df$USERID = as.factor(df$USERID)#From 1 to 18
+df$FLOOR = as.factor(df$FLOOR)
+df$BUILDINGID = as.factor(df$BUILDINGID)
+df$SPACEID = as.factor(df$SPACEID)
+df$RELATIVEPOSITION = as.factor(df$RELATIVEPOSITION)
+validation$BUILDINGID = as.factor(validation$BUILDINGID)
+validation$FLOOR = as.factor(validation$FLOOR)
+```
+
+We eliminate the variables that have zero variance since they can not be useful for the localization. Furthermore we eliminate the observations where there is no signal since they contained no information (they are not "linked" to a specific place in the building).
+
+```{r}
+# Eliminate the variables with zero variance
+Var0_training= list()
+for (i in 1:520){ 
+  if (length(unique(df[,i])) == 1){
+    Var0_training = append(Var0_training,i)
+  }}
+
+Var0_testing = list()
+for (i in 1:520){
+  if (length(unique(validation[,i])) == 1){
+    Var0_testing = append(Var0_testing,i)}}
+
+Var0 = append(Var0_training,Var0_testing)
+mydf = df[,-unlist(Var0)] 
+
+# ELiminate the rows with no signals.
+line = which( apply(df[,1:520],1,function(x){ length(unique(x))})== 1)
+mydf = mydf[-line,]
+
+# Eliminate the duplicates
+mydf = unique(mydf)
+```
+
+We replace the value of no signal (100) with -105. Indeed, it is more useful for the models that this values is similar to the weaker RSSI level. 
+
+```{r}
+# Replace no signal with the value -105.
+
+for (i in 1:312){
+  mydf[,i] = replace(mydf[,i],mydf[,i]==100,-105)
+}
+
+for (i in 1:520){
+  validation[,i] = replace(validation[,i],validation[,i]==100,-105)
+}
+```
+
+
+## Localize the WAPS 
+
+We want to find in which build is located every WAPS. Indeed, this information will be useful when build a model for every building. To locate a WAPS we look in which building the signal was received.
+
+```{r}
+# First divide the observations in the training according to the building in which it was take.
+building0 = subset(mydf, mydf$BUILDINGID ==0)
+building1 = subset(mydf, mydf$BUILDINGID == 1)
+building2 = subset(mydf, mydf$BUILDINGID == 2)
+
+#For every WAPS then we look if it signal was received in the different building.
+index0 = which(apply(building0[,1:312], 2, function(x){length(unique(x))}) != 1)
+# length(index0): 146
+index1 = which(apply(building1[,1:312], 2, function(x){length(unique(x))}) != 1)
+# length(index1): 168
+index2 = which(apply(building2[,1:312], 2, function(x){length(unique(x))}) != 1)
+# length(index2):122
+
+# We look at the WAPS whose signal was received in more then one building
+Waps_in_common = unique(c(intersect(index0, index1),intersect(index1, index2),intersect(index0, index2)))
+
+# We look at the Waps whose signal is received in every building. The signal is  very low in all the buildings so we can not consider them.
+intersect_all =  intersect(intersect(index0, index1),index2)#193,285
+
+# We look at Waps whose signal is received in resp. building 0,1,2. 
+# For this WAPS we can already determined their position.
+only0 = setdiff( index0, Waps_in_common)
+only1 = setdiff( index1, Waps_in_common)
+only2 = setdiff( index2, Waps_in_common)
+
+# For the other I look in wwhich build was received the strongest signal.
+
+l0 = c() # Waps that are in building 0
+l1 = c()  # Waps that are in building 1
+l2 = c()   # Waps that are in building 2
+
+for (i in intersect(index0,index1)){
+  if (i != 193 & i != 285){
+    
+    value0 = building0[i][building0[i] != -105 ]
+    value1 = building1[i][building1[i] != -105 ]
+    if ( abs(max(value0)-max(value1))>5 ){
+      if(max(value0)> max(value1) & length(value0)> length(value1)){
+        l0=c(l0,i)
+      }
+      if (length(value1)> length(value0)){l1 = c(l1,i)}
+    }
+  }}
+
+for (i in intersect(index0,index2)){
+  if (i != 193 & i != 285){
+    
+    value0 = building0[i][building0[i] != -105 ]
+    value2 = building2[i][building2[i] != -105 ]
+    if ( abs(max(value0)-max(value2))>5 ){
+      if(max(value0)> max(value2) & length(value0)> length(value2)){
+        l0=c(l0,i)
+      }
+      if (length(value2)> length(value0)){l2 = c(l2,i)}
+    }
+  }}
+
+for (i in intersect(index1,index2)){
+  if (i != 193 & i != 285){
+    value1 = building1[i][building1[i] != -105 ]
+    value2 = building2[i][building2[i] != -105 ]
+    if ( abs(max(value1)-max(value2))>5 ){
+      if(max(value1)> max(value2) & length(value1)> length(value2)){
+        l1=c(l1,i)
+      }
+      if (length(value2)> length(value1)){l2 = c(l2,i)}
+    }
+  }}
+
+final0 = c(only0, l0)
+final1 = c(only1, l1)
+final2 = c(only2, l2)
+finalcol = c(final0,final1,final2)
+
+```
+
+# Modeling 
+
+There are different appraches possible to construct a model for determing the position of a person. After have carefully considered all the possibilities, we decide to do the following:
+
+1. Predict the building using all the training.
+2. Build a model for every building using as traing the observations taken in that building and the WAPS we have located there.
+
+
+## Training set
+
+We consider just the WAPS that we have located in one of the three building. We prepare the folders for the cross validation.
+
+```{r}
+fitControl <- trainControl(
+  method = "repeatedcv",
+  number = 10,
+  repeats = 1)
+
+mydf1 = mydf[,c(finalcol,313:321)]
+
+```
+
+## Model to identify the building
+
+Prepare the data set with just the useful columns we are going to use.
+
+```{r}
+building = mydf1[,c(1:length(finalcol))]
+building$BUILDINGID = mydf$BUILDINGID
+```
+
+We try three well known models (KNN, random forest and SVM) with different parameters. 
+
+```{r eval = FALSE}
+# List to save the results of the models
+validation_building= list()
+models_building = list()
+
+#KNN
+set.seed(123)
+mod_knn <- train(BUILDINGID~., data = building, method = "knn",tuneGrid= expand.grid(k = c(1)), trControl=fitControl)
+
+
+#Random Forest
+set.seed(123)
+mod_forest <- randomForest(BUILDINGID~., data = building, ntree= 100)
+
+#Support Vector Machine
+set.seed(123)
+mod_svm <-  svm( BUILDINGID ~., data = building, trControl=fitControl, metric=accuracy)
+
+# Save the performance
+models_building = list( mod_knn, mod_forest, mod_svm)
+ for (i in models_building){
+   prediction = predict(i,validation)
+   performance <- confusionMatrix(prediction, validation$BUILDINGID)
+   validation_building = append(validation_building, performance)}
+```
+
+After have looked at the confusion metrix of the different models, we decide that the best model is knn with k = 1. In the following table you can see the confusion matrix of this model.
+
+```{r}
+model_building <- readRDS(paste(model_paths,"/model_building",sep =''))
+prediction = predict(model_building,validation)
+performance <- confusionMatrix(prediction, validation$BUILDINGID)
+table(prediction, validation$BUILDINGID)
+```
+
+We have just two positions of the validation set that were not located in the correct building. We plot their real positions to check if we can understand why this has happened. We think that the uncorrect classification in building 2 can be due to the fact that there were no positions in the training in that zone.
+
+```{r}
+# Position in the building 0, floor 0
+plot1 = ggplot( subset(mydf,FLOOR == 0), aes(x = LONGITUDE, y = LATITUDE)) + 
+   geom_point() +
+   geom_point(aes(x =  -7630.856, y= 4864990), colour="red" , size = 3)+ggtitle("Building 0")
+
+# Position in the building 2, floor 4
+plot2 = ggplot( subset(mydf,FLOOR == 4), aes(x = LONGITUDE, y = LATITUDE)) + 
+geom_point() +geom_point(aes(x =  -7331.9, y= 4864768 ), colour="red" , size = 3)+ggtitle("Building 2")
+
+grid.arrange(plot1, plot2, ncol=2)
+```
+
+From now on we will not consider these two observation of the validation. We prepare the new validation data where we have removed these two observations.
+```{r}
+validation1=validation[-c(488,926),]
+
+```
+
+
+## Model for the buildings
+For the three buildings we have used the same steps in order to predict the position. The step are the followings:
+
+- prepare the training with just the observations that were taken in that building and the signals of the WAPS that are in that building (We have found them in the preprocessing).
+- predict the floor trying knn, random forest and svm with different parameters.
+- predict the longitude trying knn, random forest and svm with different parameters.
+- predict the latitude trying knn, random forest and svm with different parameters.
+- Finally, we have put all the three information together and we have studied the distribution of the errors, in order to understang better the factors that influeced them (see also the word document to have more observations about the errors).
+
+
+## Model for building 1
+### Floor
+
+We start predicting the floor.
+
+```{r eval = False}
+# list to save the results
+floor = list()
+performance = list()
+
+# prepare the training and validation
+i = 0
+  columns = (get(paste("final", i, sep="")))
+  building = mydf[,c(columns,315,316)]
+  building = subset(building, BUILDINGID == i )
+  building$BUILDINGID <-NULL
+  building$FLOOR <- factor(building$FLOOR)
+  validation2 = subset(validation1, BUILDINGID == i )
+  validation2$FLOOR = factor(validation2$FLOOR)
+
+# Knn
+set.seed(123)
+mod_knn <- train.kknn( FLOOR  ~., data = building, ks = c(1,2,3,4,5),kernels= c('triangular','optimal', "triweight"))
+
+# Random forest
+  set.seed(123)
+  mod_forest <- randomForest(FLOOR~., data = building, ntree= 100)
+  
+# SVM
+set.seed(123)
+mod_svm <-  svm( FLOOR ~., data = building, trControl=fitControl, metric=accuracy)
+  
+# Save the performance
+floor[[i+1]] = list( mod_knn, mod_forest, mod_svm)
+result=list()
+  for (j in floor[[i+1]]){
+    prediction = predict(j,validation2)
+    per <- confusionMatrix(prediction, factor(validation2$FLOOR))
+    result = append( result, per)
+  }
+  performance[[i+1]]= result
+```
+
+After have analysed the three models, we saw the best results with the random forest. We find quite good results with an accuracy of 98%. Just one time we predicted a floor that was two levels more then the actual one, as you can see in the confusion matrix.
+
+```{r}
+B0_floor_model = readRDS(paste(model_paths,"/B0_floor_model ",sep =''))
+B0_floor_prediction =readRDS(paste(model_paths,"/B0_floor_prediction  ", sep =''))
+B0_floor_confusion =readRDS(paste(model_paths,"/B0_floor_confusion", sep =''))
+print(B0_floor_confusion)
+```
+
+### Longitude
+
+We then predict the longitude.
+
+```{r eval=FALSE}
+# Lists to save the results
+longitude = list()
+longitude_performance = list()
+
+# prepare the training and validation
+i = 0
+columns = (get(paste("final", i, sep="")))
+building = mydf[,c(columns,313,316)]
+building = subset(building, BUILDINGID == i )
+building$BUILDINGID <-NULL
+validation2 = subset(validation1, BUILDINGID == i ) 
+
+# KNN
+set.seed(123)
+mod_knn <- train.kknn( LONGITUDE ~., data = building, ks = c(1,2,3,4,5),kernels= c('triangular','optimal', "triweight","cos", "inv", "gaussian"))
+  mod_knn <- train(LONGITUDE~., data = building, method = "knn", tuneGrid= expand.grid(k = c(4)))
+  
+# Random forest
+set.seed(123)
+mod_forest <- randomForest(LONGITUDE~., data = building, ntree= 100)
+  
+# SVM
+set.seed(123)
+mod_svm <-  svm(LONGITUDE~., data = building, trControl=fitControl, metric=accuracy)
+  
+# Save the performance 
+longitude[[i+1]]= list( mod_knn, mod_forest, mod_svm)
+result = list()
+for (j in longitude[[i+1]]){
+    prediction = predict(j,validation2)
+    per <- postResample(prediction, validation2$LONGITUDE)
+    result = append( result, per)
+  }
+longitude_performance[[i+1]]= result
+
+```
+
+We obtain the best results with knn k = 4.
+
+```{r}
+B0_longitude_model = readRDS(paste(model_paths,"/B0_longitude_model",sep =''))
+B0_longitude_prediction = readRDS(paste(model_paths,"/B0_longitude_prediction", sep =''))
+B0_longitude_postresample = readRDS(paste(model_paths,"/B0_longitude_postresample ", sep =''))
+B0_longitude_real = validation2$LONGITUDE
+print(B0_longitude_postresample)
+
+```
+
+We plot the distribution of the errors in the test. Even if the errors greater then 20 are more often with the negative sign, we are quite satisfied with the distribution. The maximum error in module is 33 meters.
+
+```{r}
+ggplot() + aes(B0_longitude_real - B0_longitude_prediction)+ geom_histogram(binwidth=1, colour="black", fill="blue")+xlab("Errors") + ylab('Frequency')
+
+```
+### Latitude
+Finally we predict the latitude.
+
+```{r}
+# lists to save the results
+latitude = list()
+latitude_performance = list()
+
+# prepare training and validation
+i = 0
+columns = (get(paste("final", i, sep="")))
+building = mydf[,c(columns,314,316)]
+building = subset(building, BUILDINGID == i )
+building$BUILDINGID <-NULL
+validation2 = subset(validation1, BUILDINGID == i ) 
+
+#Knn
+set.seed(123)
+mod_knn <- train(LATITUDE~., data = building, method = "knn", trControl=fitControl,tuneGrid= expand.grid(k = c(4)))
+
+# Random forest
+set.seed(123)
+mod_forest <- randomForest(LATITUDE~., data = building, ntree= 100)
+
+#SVM
+set.seed(123)
+mod_svm <-  svm(LATITUDE~., data = building, trControl=fitControl, metric=accuracy)
+
+# Save the results
+latitude[[i+1]] = list( mod_knn, mod_svm, mod_forest)
+result = list()
+  for (j in latitude[[i+1]]){
+    prediction = predict(j,validation2)
+    per <- postResample(prediction, validation2$LATITUDE)
+    result = append( result, per)
+  }
+  latitude_performance[[i+1]]= result
+
+```
+
+Also in this case, we find that the best result with knn, k = 4.
+
+```{r}
+B0_latitude_model =  readRDS(paste(model_paths,"/B0_latitude_model =  mod_knn", sep =''))
+B0_latitude_prediction =  readRDS(paste(model_paths,"/B0_latitude_prediction", sep =''))
+B0_latitude_postresample = postResample(B0_latitude_prediction , validation2$LATITUDE)
+B0_latitude_real = validation2$LATITUDE
+print(B0_latitude_postresample)
+```
+
+We plot the residuals to look at the distribution.
+```{r}
+ggplot() + aes(B0_latitude_real - B0_latitude_prediction)+ geom_histogram(binwidth=1, colour="black", fill="red")+xlab("Errors") + ylab('Frequency')
+
+```
+
+### Study of the errors
+
+We can now put together all the three predictions (floor, longitudine and latitude) and represent better the errors we got. 
+
+```{r}
+# Distribution of the errors
+error_distance = sqrt((B0_latitude_real - B0_latitude_prediction)^2+(B0_longitude_real - B0_longitude_prediction)^2)
+plot1 = ggplot() + aes(error_distance)+ geom_histogram(binwidth=1, colour="black", fill="green")+xlab("Errors") + ylab('Frequency')
+
+# Visualization of the errors in longitude, latitute and floor
+E = validation2
+E$long = B0_longitude_real - B0_longitude_prediction
+E$lat = B0_latitude_real - B0_latitude_prediction
+
+plot2 = ggplot()+ geom_point(data = E[which(B0_floor_prediction == factor(validation2$FLOOR)),], aes(x = long, y = lat))+xlab("Longitude") + 
+  geom_point(data = E[-which(B0_floor_prediction == factor(validation2$FLOOR)),], aes(x = long, y = lat),color='red')+xlab("Longitude") + 
+  ylab("Latitude") 
+
+grid.arrange(plot1, plot2, ncol=2)
+
+```
+
+Let us have a look at the positions of the errors in the following graph.
+
+```{r}
+# errors by floor
+ERRORB0 = validation2
+ERRORB0$error = error_distance
+RIGHTFLOOR = ERRORB0[which(B0_floor_prediction == factor(validation2$FLOOR)),]
+WRONGFLOORP1 = ERRORB0[which(as.integer(B0_floor_prediction) == (as.integer(validation2$FLOOR)+1)),]
+WRONGFLOORP2 = ERRORB0[which(as.integer(B0_floor_prediction) == (as.integer(validation2$FLOOR)+2)),]
+WRONGFLOORM1 = ERRORB0[which(as.integer(B0_floor_prediction) == (as.integer(validation2$FLOOR)-1)),]
+
+# Plots of the errors
+plots = list()
+for (i in c(0,1:3)){
+  g = ggplot() +  geom_point(data=subset(RIGHTFLOOR, FLOOR == i), aes(x=LONGITUDE, y =LATITUDE,color= error)) + scale_color_gradient(low = "lightblue", high = "blue")+
+    geom_point(data= subset(WRONGFLOORP1,FLOOR==i), aes(x=LONGITUDE, y=LATITUDE), color='red')+
+    geom_point(data= subset(WRONGFLOORP2,FLOOR==i), aes(x=LONGITUDE, y=LATITUDE), color='darkred')+
+    geom_point(data= subset(WRONGFLOORM1,FLOOR==i), aes(x=LONGITUDE, y=LATITUDE), color='black')+
+    ggtitle(paste('Floor',i))+theme_minimal()
+plots[[i+1]]= g
+}
+grid.arrange(grobs=plots,ncol=2)
+```
+
+We see that for some observations in the extremities of the building, we have picked the wrong floor. One possible explanation is that we obtain some points in the floor above or below because we have less observations near the right position in the same floor. 
+
+## Model for building 2
+We repeat the same steps of the previous building.
+
+### Floor
+We predict the floor.
+
+```{r eval= FALSE}
+# List to save the results
+floor = list()
+performance = list()
+
+# Training and validation
+i = 1
+columns = (get(paste("final", i, sep="")))
+building = mydf[,c(columns,315,316, 319)]
+building = subset(building, BUILDINGID == i)
+building$BUILDINGID <-NULL
+building$USERID <- NULL
+building$FLOOR <- factor(building$FLOOR)
+validation2 = subset(validation1, BUILDINGID == i ) 
+validation2$FLOOR = factor(validation2$FLOOR)
+
+#knn
+set.seed(123)
+mod_knn <- train.kknn( FLOOR  ~., data = building, ks = c(1,2,3,4,5),kernels= c('triangular','optimal', "triweight",'rectangular'))
+
+#Random forest
+set.seed(123)
+mod_forest <- randomForest(FLOOR~., data = building, ntree= 100)
+
+#SVM
+set.seed(123)
+mod_svm <-  svm( FLOOR ~., data = building, trControl=fitControl, metric=accuracy)
+
+# Save the results
+floor[[i+1]] = list( mod_knn ,mod_forest,mod_svm)
+result=list() 
+for (j in floor[[i+1]]){
+  prediction = predict(j,validation2)
+  per <- confusionMatrix(prediction, factor(validation2$FLOOR))
+  
+  result = append( result, per)
+}
+```
+
+We choose SVM  because its performance wis remarkable better than the other algorithms. We notice that in six cases we got an error bigger than two floors.  We see clearly that there was a problem of classification between floor 1 and 2. More precisely 28 people that were in floor 1 were located in floor 2. 
+
+```{r}
+B1_floor_model = readRDS(paste(model_paths,"/B1_floor_model", sep =''))
+B1_floor_prediction =readRDS(paste(model_paths,"/B1_floor_prediction", sep = ''))
+B1_floor_confusion =readRDS(paste(model_paths,"/B1_floor_confusion", sep = ''))
+B1_floor_confusion
+```
+### Longitude
+We predict the longitude.
+
+```{r eval = FALSE}
+#Lists to save the results
+longitude = list()
+longitude_performance = list()
+
+#Training and testing
+i = 1
+columns = (get(paste("final", i, sep="")))
+building = mydf[,c(columns,313,316)]
+building = subset(building, BUILDINGID == i )
+building$BUILDINGID <-NULL
+validation2 = subset(validation1, BUILDINGID == i ) 
+
+#knn
+set.seed(123)
+mod_knn <- train.kknn( LONGITUDE ~., data = building, ks = c(1,2,3,4,5),kernels= c('triangular','optimal', "triweight","cos", "inv", "gaussian"))
+  
+#random forest
+set.seed(123)
+mod_forest <- randomForest(LONGITUDE~., data = building, ntree= 100)
+
+#SVM
+set.seed(123)
+mod_svm <-  svm(LONGITUDE~., data = building, trControl=fitControl, metric=accuracy)
+
+#Save the results
+longitude[[i+1]] = list( mod_knn,mod_forest,mod_svm)
+result = list()
+for (j in longitude[[i+1]]){
+  prediction = predict(j,validation2)
+  per <- postResample(prediction, validation2$LONGITUDE)
+  g = ggplot() + aes(validation2$LONGITUDE - prediction)+ geom_histogram(binwidth=1, colour="black", fill="blue")+xlab("Errors") + ylab('Frequency')
+   result = append( result, per)
+  }
+  longitude_performance[[i+1]]= result
+```
+
+We chose the random forest.
+```{r}
+B1_longitude_model = readRDS(paste(model_paths,"/B1_longitude_model", sep =''))
+B1_longitude_prediction = readRDS(paste(model_paths,"/B1_longitude_prediction", sep =''))
+B1_longitude_postresample = readRDS(paste(model_paths,"/B1_longitude_postresample ", sep = ''))
+print(B1_longitude_postresample)
+```
+
+We look at the distribution of the errors. 
+```{r}
+ggplot() + aes(validation2$LONGITUDE - B1_longitude_prediction)+ geom_histogram(binwidth=1, colour="black", fill="blue")+xlab("Errors") + ylab('Frequency')
+```
+
+### Latitude
+
+We predict the latitude.
+
+```{r eval = FALSE}
+latitude = list()
+latitude_performance = list()
+
+i = 1 
+columns = (get(paste("final", i, sep="")))
+building = mydf[,c(columns,314,316)]
+building = subset(building, BUILDINGID == i )
+building$BUILDINGID <-NULL
+validation2 = subset(validation1, BUILDINGID == i ) 
+
+#knn
+set.seed(123)
+mod_knn <- train.kknn( LATITUDE~., data = building, ks = c(1,2,3,4,5),kernels= c('triangular','optimal', "triweight",'rectangular'))
+
+#Random forest
+set.seed(123)
+mod_forest <- randomForest(LATITUDE~., data = building, ntree= 100)
+
+#SVM
+set.seed(123)
+mod_svm <-  svm(LATITUDE~., data = building, trControl=fitControl, metric=accuracy)
+
+# Save the results
+latitude[[i+1]] = list( mod_knn,mod_forest, mod_svm)
+result = list()
+for (j in latitude[[i+1]]){
+    prediction = predict(j,validation2)
+    g = ggplot() + aes(validation2$LATITUDE - prediction)+ geom_histogram(binwidth=1, colour="black", fill="red")+xlab("Errors") + ylab('Frequency')
+    print(g)
+    per <- postResample(prediction, validation2$LATITUDE)
+    result = append( result, per)
+  }
+latitude_performance[[i+1]]= result
+
+```
+
+We obtain the best results with the random forest.
+```{r}
+B1_latitude_model =  readRDS(paste(model_paths,"/B1_latitude_model =  mod_knn", sep = ''))
+B1_latitude_prediction =  readRDS(paste(model_paths,"/B1_latitude_prediction", sep = ''))
+B1_latitude_postresample = postResample(B1_latitude_prediction , validation2$LATITUDE)
+print(B1_latitude_postresample)
+```
+
+We plot the distribution of the errors.
+
+```{r}
+ggplot() + aes(validation2$LATITUDE - B1_latitude_prediction)+ geom_histogram(binwidth=1, colour="black", fill="red")+xlab("Errors") + ylab('Frequency')
+```
+
+
+### Studying the errors
+
+We look at the errors combinig all the predictions.
+
+```{r}
+# Distribution of the errors
+error_distance = sqrt((validation2$LATITUDE - B1_latitude_prediction)^2+(validation2$LONGITUDE - B1_longitude_prediction)^2)
+plot1 = ggplot() + aes(error_distance)+ geom_histogram(binwidth=1, colour="black", fill="green")+xlab("Errors") + ylab('Frequency')
+#mean(error_distance)
+
+# visualization of longitude, latitude and floor
+E = validation2
+E$long = validation2$LONGITUDE- B1_longitude_prediction
+E$lat = validation2$LATITUDE - B1_latitude_prediction
+
+plot2 = ggplot()+ geom_point(data = E[which(B1_floor_prediction == factor(validation2$FLOOR)),], aes(x = long, y = lat))+xlab("Longitude") + 
+  geom_point(data = E[-which(B1_floor_prediction == factor(validation2$FLOOR)),], aes(x = long, y = lat),color='red')+xlab("Longitude") + 
+  ylab("Latitude")+theme_minimal()
+grid.arrange(plot1, plot2, ncol = 2)
+```
+
+Position of the errors.
+```{r}
+# save the errors
+ERRORB0 = validation2
+ERRORB0$error = error_distance
+RIGHTFLOOR = ERRORB0[which(B1_floor_prediction == factor(validation2$FLOOR)),]
+WRONGFLOORP1 = ERRORB0[which(as.integer(B1_floor_prediction) == (as.integer(validation2$FLOOR)+1)),]
+WRONGFLOORP2 = ERRORB0[which(as.integer(B1_floor_prediction) == (as.integer(validation2$FLOOR)+2)),]
+WRONGFLOORP3 = ERRORB0[which(as.integer(B1_floor_prediction) == (as.integer(validation2$FLOOR)+3)),]
+WRONGFLOORM1 = ERRORB0[which(as.integer(B1_floor_prediction) == (as.integer(validation2$FLOOR)-1)),]
+WRONGFLOORM2 = ERRORB0[which(as.integer(B1_floor_prediction) == (as.integer(validation2$FLOOR)-2)),]
+WRONGFLOORM3 = ERRORB0[which(as.integer(B1_floor_prediction) == (as.integer(validation2$FLOOR)-3)),]
+
+# Graph
+plots = list()
+for (i in c(0,1:3)){
+  g = ggplot() +  geom_point(data=subset(RIGHTFLOOR, FLOOR == i), aes(x=LONGITUDE, y =LATITUDE,color= error)) + scale_color_gradient(low = "lightblue", high = "blue")+
+    geom_point(data= subset(WRONGFLOORP1,FLOOR==i), aes(x=LONGITUDE, y=LATITUDE), color='sienna1')+
+    geom_point(data= subset(WRONGFLOORP2,FLOOR==i), aes(x=LONGITUDE, y=LATITUDE), color='red')+
+    geom_point(data= subset(WRONGFLOORP3,FLOOR==i), aes(x=LONGITUDE, y=LATITUDE), color='darkred')+
+    geom_point(data= subset(WRONGFLOORM1,FLOOR==i), aes(x=LONGITUDE, y=LATITUDE), color='gray42')+
+    geom_point(data= subset(WRONGFLOORM2,FLOOR==i), aes(x=LONGITUDE, y=LATITUDE), color='black')+
+   
+    ggtitle(paste('Floor',i))+theme_minimal()
+plots[[i+1]] = g
+}
+grid.arrange(grobs = plots, ncol= 2)
+```
+We have clearly a problem in the central region of the floor 1 since all the devices were located in the wrong floor.  
+
+## Model for building 3
+We repeat the same steps done for the previous buildings.
+
+### Floor
+We predict the floor.
+
+```{r}
+# Lists to save the results
+floor = list()
+performance = list()
+
+# We prepare the training and dataset
+# We eliminate the observation of userid 6 which have a strange signal
+i = 2
+columns = (get(paste("final", i, sep="")))
+building = mydf[,c(columns,315,316, 319)]
+building = subset(building, BUILDINGID == i )
+line = which(apply(building[,1:76],1, max)>-30)
+line  = intersect(which(building$USERID == 6), line)
+building = building[-line,]
+building$BUILDINGID <-NULL
+building$USERID <- NULL
+building$FLOOR <- factor(building$FLOOR)
+validation2 = subset(validation1, BUILDINGID == i ) 
+validation2$FLOOR = factor(validation2$FLOOR)
+
+#Knn
+set.seed(123)
+mod_knn <- train.kknn( FLOOR  ~., data = building, ks = c(1,2,3,4,5),kernels= c('triangular','optimal', "triweight",'rectangular'))
+
+#Random forest
+set.seed(123)
+mod_forest <- randomForest(FLOOR~., data = building, ntree= 100)
+
+#SVM
+set.seed(123)
+mod_svm <-  svm( FLOOR ~., data = building, trControl=fitControl, metric=accuracy)
+
+# Save the results
+floor[[i+1]] = list( mod_knn ,mod_forest,mod_svm)
+result=list() 
+for (j in floor[[i+1]]){
+  prediction = predict(j,validation2)
+  per <- confusionMatrix(prediction, factor(validation2$FLOOR))
+
+  result = append( result, per)
+}
+```
+
+The best model is the random forest with 100 trees and mtry = 8.
+
+```{r}
+B2_floor_model = readRDS(paste(model_paths,"/B2_floor_model", sep = ''))
+B2_floor_prediction =readRDS(paste(model_paths,"/B2_floor_prediction", sep = '' ))
+B2_floor_confusion =readRDS(paste(model_paths,"/B2_floor_confusion", sep = ''))
+print(B2_floor_confusion)
+```
+
+### Longitude
+
+We predict the longitude.
+```{r eval = FALSE}
+# lists to save the results
+longitude = list()
+longitude_performance = list()
+
+# Training and validation
+i = 2
+columns = (get(paste("final", i, sep="")))
+building = mydf[,c(columns,313,316,319)]
+building = subset(building, BUILDINGID == i)
+line = which(apply(building[,1:76],1, max)>-30)
+line  = intersect(which(building$USERID == 6), line)
+building = building[-line,]
+building$BUILDINGID <-NULL
+building$USERID <- NULL
+validation2 = subset(validation1, BUILDINGID == i ) 
+
+# knn
+set.seed(123)
+mod_knn <- train.kknn( LONGITUDE~., data = building, ks = c(1,2,3,4,5),kernels= c('triangular','optimal', "triweight",'rectangular'))
+
+# random forest
+set.seed(123)
+mod_forest <- randomForest(LONGITUDE~., data = building, ntree= 100)
+
+# svm
+set.seed(123)
+mod_svm <-  svm(LONGITUDE~., data = building, trControl=fitControl, metric=accuracy)
+
+# save the results
+longitude[[i+1]] = list( mod_knn,mod_forest,mod_svm)
+result = list()
+for (j in longitude[[i+1]]){
+  prediction = predict(j,validation2)
+  per <- postResample(prediction, validation2$LONGITUDE)
+  g = ggplot() + aes(validation2$LONGITUDE - prediction)+ geom_histogram(binwidth=1, colour="black", fill="blue")+xlab("Errors") + ylab('Frequency')
+  print(g)
+  result = append( result, per)
+}
+
+
+```
+
+The best model is the random forest with mtry = 25.
+
+```{r}
+B2_longitude_model = readRDS(paste(model_paths,"/B2_longitude_model", sep = ''))
+B2_longitude_prediction = readRDS(paste(model_paths,"/B2_longitude_prediction", sep = ''))
+B2_longitude_postresample = readRDS(paste(model_paths,"/B2_longitude_postresample ", sep = ''))
+print(B2_longitude_postresample)
+```
+
+We check the distribution of the errors.
+
+```{r}
+ggplot() + aes(validation2$LONGITUDE - B2_longitude_prediction)+ geom_histogram(binwidth=1, colour="black", fill="blue")+xlab("Errors") + ylab('Frequency')
+```
+
+
+### Latitude
+We predict the latitude.
+```{r}
+# Lists to save the results
+latitude = list()
+latitude_performance = list()
+
+# training and validation
+i = 2
+columns = (get(paste("final", i, sep="")))
+building = mydf[,c(columns,314,316,319)]
+building = subset(building, BUILDINGID == i )
+line = which(apply(building[,1:76],1, max)>-30)
+line  = intersect(which(building$USERID == 6), line)
+building = building[-line,]
+building$BUILDINGID <-NULL
+building$USERID <-NULL
+validation2 = subset(validation1, BUILDINGID == i ) 
+
+# Knn
+set.seed(123)
+mod_knn <- train.kknn( LATITUDE~., data = building, ks = c(1,2,3,4,5),kernels= c('triangular','optimal', "triweight",'rectangular'))
+
+# random forest
+set.seed(123)
+mod_forest <- randomForest(LATITUDE~., data = building, ntree= 100)
+
+#SVM
+set.seed(123)
+mod_svm <-  svm(LATITUDE~., data = building, trControl=fitControl, metric=accuracy)
+latitude[[i+1]] = list( mod_knn,mod_forest, mod_svm)
+
+# save the results
+result = list()
+for (j in latitude[[i+1]]){
+  prediction = predict(j,validation2)
+  g = ggplot() + aes(validation2$LATITUDE - prediction)+ geom_histogram(binwidth=1, colour="black", fill="red")+xlab("Errors") + ylab('Frequency')
+  print(g)
+  per <- postResample(prediction, validation2$LATITUDE)
+  result = append( result, per)
+}
+latitude_performance[[i+1]]= result
+
+```
+
+The best model is knn with k = 5.
+
+```{r}
+B2_latitude_model =  readRDS(paste(model_paths,"/B2_latitude_model =  mod_knn", sep = ''))
+B2_latitude_prediction =  readRDS(paste(model_paths,"/B2_latitude_prediction", sep = ''))
+B2_latitude_postresample = readRDS(paste(model_paths,"/B2_latitude_postresample", sep = ''))
+print(B2_latitude_postresample)
+```
+
+We look at the distribution of the errors.
+
+```{r}
+ggplot() + aes(validation2$LATITUDE - B2_latitude_prediction)+ geom_histogram(binwidth=1, colour="black", fill="red")+xlab("Errors") + ylab('Frequency')
+
+```
+
+
+### Study of the errors
+
+We study the errors comibining the three predictions. 
+
+```{r}
+# Distribution of the errors
+error_distance = sqrt((validation2$LATITUDE - B2_latitude_prediction)^2+(validation2$LONGITUDE - B2_longitude_prediction)^2)
+plot1 = ggplot() + aes(error_distance)+ geom_histogram(binwidth=1, colour="black", fill="green")+xlab("Errors") + ylab('Frequency')
+#mean(error_distance)
+
+# Visualization of the errors combined
+E = validation2
+E$long = validation2$LONGITUDE- B2_longitude_prediction
+E$lat = validation2$LATITUDE - B2_latitude_prediction
+plot2 = ggplot()+ geom_point(data = E[which(B2_floor_prediction == factor(validation2$FLOOR)),], aes(x = long, y = lat))+xlab("Longitude") + 
+  geom_point(data = E[-which(B2_floor_prediction == factor(validation2$FLOOR)),], aes(x = long, y = lat),color='red')+xlab("Longitude") + 
+  ylab("Latitude")
+grid.arrange(plot1, plot2, ncol=2)
+```
+
+
+```{r}
+#Plot the errors by floor
+ERRORB0 = validation2
+ERRORB0$error = error_distance
+RIGHTFLOOR = ERRORB0[which(B2_floor_prediction == factor(validation2$FLOOR)),]
+WRONGFLOORP1 = ERRORB0[which(as.integer(B2_floor_prediction) == (as.integer(validation2$FLOOR)+1)),]
+WRONGFLOORP2 = ERRORB0[which(as.integer(B2_floor_prediction) == (as.integer(validation2$FLOOR)+2)),]
+WRONGFLOORP3 = ERRORB0[which(as.integer(B2_floor_prediction) == (as.integer(validation2$FLOOR)+3)),]
+WRONGFLOORM1 = ERRORB0[which(as.integer(B2_floor_prediction) == (as.integer(validation2$FLOOR)-1)),]
+WRONGFLOORM2 = ERRORB0[which(as.integer(B2_floor_prediction) == (as.integer(validation2$FLOOR)-2)),]
+WRONGFLOORM3 = ERRORB0[which(as.integer(B2_floor_prediction) == (as.integer(validation2$FLOOR)-3)),]
+
+WRONGFLOOR = ERRORB0[-which(B2_floor_prediction == factor(validation2$FLOOR)),]
+plots = list()
+for (i in c(0,1:4)){
+  g = ggplot() +  geom_point(data=subset(RIGHTFLOOR, FLOOR == i), aes(x=LONGITUDE, y =LATITUDE,color= error)) + scale_color_gradient(low = "lightblue", high = "blue")+
+    geom_point(data= subset(WRONGFLOORP1,FLOOR==i), aes(x=LONGITUDE, y=LATITUDE), color='sienna1')+
+    geom_point(data= subset(WRONGFLOORP2,FLOOR==i), aes(x=LONGITUDE, y=LATITUDE), color='red')+
+    geom_point(data= subset(WRONGFLOORP3,FLOOR==i), aes(x=LONGITUDE, y=LATITUDE), color='darkred')+
+    geom_point(data= subset(WRONGFLOORM1,FLOOR==i), aes(x=LONGITUDE, y=LATITUDE), color='gray42')+
+    geom_point(data= subset(WRONGFLOORM2,FLOOR==i), aes(x=LONGITUDE, y=LATITUDE), color='black')+
+    geom_point(data= subset(WRONGFLOORM3,FLOOR==i), aes(x=LONGITUDE, y=LATITUDE), color='black')+
+    ggtitle(paste('Floor',i))+theme_minimal()
+  
+  plots[[i+1]]= g
+}
+
+grid.arrange(grobs=plots,ncol=2)
+```
+In the right-down-corner of the 4 floor we have that 4 observations were predicted in the third floor. The reason is that in that training there were no observation that zone. This tell us how important is to have observation in every zone. The particular shape of the building, hole in the middle, can also represent a problem: the signal of two places can be similar even if they are distant (since the waves propagate better without walls etc.).  
+
+## Conclusion
+The model could be used in a real application to help people to find their position, if they are in the buildig 0. Indeed, given that we predicted the right floor (true in 98% of the cases), we obtained that in 90% of the observations in the validation the error was less then 12 meters. In the other two buildings the errors were too high for a concrete application.

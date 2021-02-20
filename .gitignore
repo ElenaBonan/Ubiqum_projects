@@ -2,3 +2,6 @@
 *_files/
 household_power_consumption.txt
 Energytask.R
+Wifi_fingerprints.R
+.R*
+trainingData.csv
