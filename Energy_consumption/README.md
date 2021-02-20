@@ -4,10 +4,11 @@ The goal of the project was to show which useful information a family can get if
 <b> Data source:</b> https://archive.ics.uci.edu/ml/datasets/individual+household+electric+power+consumption <br>
 <b> Link to visualize the notebook: </b> https://elenabonan.github.io/Ubiqum_projects/
 
-## Content of the Repository
+## Content of the repository
 - <b> Analysis.Rmd </b> This is the code of the R notebook where you can find both the descriptive Analysis and the Forecast of the Energy consumption. For visualize the notebook, look at the following link https://elenabonan.github.io/Ubiqum_projects/.
 - <b> Analysis.nb.html </b> This is the html code given by the Rmarkdown, using as output html_notebook.
 - <b> Presentation.pptx </b> This is a presentation I gave during the course showing the most important findings. 
+- <b> household_power_consumption.7z </b> The dataset (compressed).
 
 ## Structure of the Code 
 - <b> Data Cleaning </b> We have taken care of the missing values and we have transformed the data in order to have the correct unit of measure.
