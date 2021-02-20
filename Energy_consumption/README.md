@@ -11,6 +11,7 @@ The goal of the project was to show which useful information a family can get if
 - <b> household_power_consumption.7z </b> The dataset (compressed).
 
 ## Structure of the Code 
+The code is divided in three parts:
 - <b> Data Cleaning </b> We have taken care of the missing values and we have transformed the data in order to have the correct unit of measure.
 - <b> Descriptive Analysis </b> We have explored the data and we have plot interesting graphs in order to show which useful information a customer can get from the submetering devices.
 - <b> Forecasting </b> We have forecast the consumption of energy using the exponential smooth model and the ARIMA model.
