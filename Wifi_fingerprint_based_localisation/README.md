@@ -9,9 +9,9 @@ Find the position of a person accurately in an indoor environment is still an op
 # Content of the Repository
 
 - <b> Data </b> A folder with the training and validation set.
-- <b> Documents </b> This folder contains two documents. A detailed report with the description of the data analysed, the findings and the metrics of the chosen models. A powerpoint presentations that we used to present the project during the course. 
+- <b> Documents </b> This folder contains two documents. A detailed report with the description of the data analysed, the findings and the metrics of the chosen models. A powerpoint that we used to present the project during the course. 
 - <b> Models </b> This folder contains the final models.
-- <b> Modeling.Rmd </b> This is the code used to create the model. To visualize the code use this link: https://elenabonan.github.io/Ubiqum_projects/Wifi.html.
+- <b> Modeling.Rmd </b> This is the code used to create the models. To visualize the code use this link: https://elenabonan.github.io/Ubiqum_projects/Wifi.html.
 - <b> Modeling.nb.html </b> This is the html code produced by the previous code in R Markdown. 
 
 # Structure of the code 
