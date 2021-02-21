@@ -421,7 +421,7 @@ result = list()
 Also in this case, we find that the best result with knn, k = 4.
 
 ```{r}
-B0_latitude_model =  readRDS(paste(model_paths,"/B0_latitude_model =  mod_knn", sep =''))
+B0_latitude_model =  readRDS(paste(model_paths,"/B0_latitude_model", sep =''))
 B0_latitude_prediction =  readRDS(paste(model_paths,"/B0_latitude_prediction", sep =''))
 B0_latitude_postresample = postResample(B0_latitude_prediction , validation2$LATITUDE)
 B0_latitude_real = validation2$LATITUDE
