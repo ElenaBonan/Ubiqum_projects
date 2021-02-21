@@ -17,7 +17,7 @@ Find the position of a person accurately in an indoor environment is still an op
 # Structure of the code 
 The code is divided in the following five parts:
 - <b> Preprocessing </b> Some of the tasks done in the preprocessing are the followings: eliminate the variables with zero variance, eliminate the observations duplicated, find an appropriate value for the absence of signal and locate the Waps in a building looking at where its signal was received.
-- <b> Model to predict the building </b> Using all the observation of the training we have predicted the building of the observation in the validations trying different models (knn, random forest and support vector machine).
-- <b> Model for building 1 </b> Using the signal of the Waps that we have located in this building, we have predicted in parallel the floor, longitude and latitude. We have used three well-known models (knn, random forest and SVM) trying different hyperparameters.
-- <b> Model for building 2 </b> We  predicted the position using the same approach of the previous building.
-- <b> Model for building 3 </b> We repeat the same process of the previous buildings. 
+- <b> Model to predict the building </b> Using all the observations of the training, we predicted the building of the observation in the validations trying different models (knn, random forest and support vector machine).
+- <b> Model for building 1 </b> Using the signal of the Waps that we located in this building, we predicted in parallel the floor, longitude and latitude. We have used three well-known models (knn, random forest and SVM) trying different hyperparameters.
+- <b> Model for building 2 </b> We predicted the position using the same approach of the previous building.
+- <b> Model for building 3 </b> We repeated the same process of the previous buildings. 
