@@ -24,8 +24,8 @@ In this first part of the code we clean the data in order to fit the model just 
 We load the data and save the path to the folder where we are going to save the models. 
 
 ```{r}
-df = read.csv(file = 'trainingData.csv', header = TRUE, sep = ',')
-validation = read.csv(file = 'validationData.csv', header = TRUE)
+df = read.csv(file = 'Data/trainingData.csv', header = TRUE, sep = ',')
+validation = read.csv(file = 'Data/validationData.csv', header = TRUE)
 model_paths = './Models'
 head(df)
 ```
